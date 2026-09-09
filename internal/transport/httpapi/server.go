@@ -30,6 +30,8 @@ func New(service *app.Service, token string, credentials map[string]WebhookCrede
 	mux.HandleFunc("POST /v1/payments", s.auth(s.create))
 	mux.HandleFunc("GET /v1/payments/{providerPaymentId}", s.auth(s.get))
 	mux.HandleFunc("POST /v1/payments/{providerPaymentId}/cancel", s.auth(s.cancel))
+	mux.HandleFunc("POST /v1/payments/{providerPaymentId}/refunds", s.auth(s.refund))
+	mux.HandleFunc("GET /v1/refunds/{providerRefundId}", s.auth(s.getRefund))
 	mux.HandleFunc("POST /webhooks/binancepay/{connectionId}", s.webhook)
 	return mux
 }
@@ -44,7 +46,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
-	write(w, 200, map[string]any{"provider": "binancepay", "operations": []string{"create", "get", "cancel"}, "paymentMethods": []string{"redirect"}, "currencies": []string{"USDT"}})
+	write(w, 200, map[string]any{"provider": "binancepay", "operations": []string{"create", "get", "cancel", "refund", "get_refund"}, "paymentMethods": []string{"redirect"}, "currencies": []string{"USDT"}})
 }
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var cmd core.CreatePaymentCommand
@@ -80,6 +82,28 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, 200, p)
+}
+func (s *Server) refund(w http.ResponseWriter, r *http.Request) {
+	var command core.CreateRefundCommand
+	if err := decode(w, r, &command); err != nil {
+		problem(w, 400, "invalid_request", err.Error())
+		return
+	}
+	result, err := s.service.CreateRefund(r.Context(), r.PathValue("providerPaymentId"), r.Header.Get("Idempotency-Key"), command)
+	if err != nil {
+		mapError(w, err)
+		return
+	}
+	write(w, 201, result)
+}
+func (s *Server) getRefund(w http.ResponseWriter, r *http.Request) {
+	connection := r.Header.Get("Provider-Connection-Id")
+	result, err := s.service.GetRefund(r.Context(), connection, r.PathValue("providerRefundId"))
+	if err != nil {
+		mapError(w, err)
+		return
+	}
+	write(w, 200, result)
 }
 func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))

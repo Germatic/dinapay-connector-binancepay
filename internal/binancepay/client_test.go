@@ -46,3 +46,27 @@ func TestCreateOrderUsesBinanceSignatureAndContract(t *testing.T) {
 		t.Fatalf("response = %#v", response)
 	}
 }
+
+func TestRefundOrderUsesExpectedEndpointAndPayload(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Path != "/binancepay/openapi/order/refund" {
+			t.Fatalf("path = %s", r.URL.Path)
+		}
+		var request RefundOrderRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.RefundRequestID != "refund1" || request.PrepayID != "prepay1" || request.RefundAmount != "0.10" {
+			t.Fatalf("request = %#v", request)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"status":"SUCCESS","code":"000000","data":{"refundId":419936748741509122,"refundRequestId":"refund1","prepayId":"prepay1","refundAmount":"0.10","refundStatus":"REFUNDED"}}`))}, nil
+	})
+	client := &Client{baseURL: "https://binance.test", apiKey: "api-key", secretKey: "secret", http: &http.Client{Transport: transport, Timeout: time.Second}}
+	response, err := client.RefundOrder(context.Background(), RefundOrderRequest{RefundRequestID: "refund1", PrepayID: "prepay1", RefundAmount: "0.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.RefundID.String() != "419936748741509122" || response.Data.RefundStatus != "REFUNDED" {
+		t.Fatalf("response = %#v", response)
+	}
+}

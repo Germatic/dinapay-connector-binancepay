@@ -172,6 +172,58 @@ func (s *Store) MarkFailed(ctx context.Context, id, message string) error {
 	return err
 }
 
+func (s *Store) ReserveRefund(ctx context.Context, key, hash string, payload []byte, cmd core.CreateRefundCommand) (*core.ProviderRefund, error) {
+	result, err := s.Pool.Exec(ctx, `INSERT INTO binancepay_v2_refunds(refund_id,transaction_id,provider_connection_id,provider_refund_id,refund_request_id,idempotency_key,request_hash,request_payload,amount,currency,status,raw_status,observed_at) VALUES($1,$2,$3,'',replace($1,'-',''),$4,$5,$6,$7,$8,'processing','',now()) ON CONFLICT DO NOTHING`, cmd.RefundID, cmd.TransactionID, cmd.ProviderConnectionID, key, hash, payload, cmd.Amount, cmd.Currency)
+	if err != nil {
+		return nil, err
+	}
+	if result.RowsAffected() == 1 {
+		return nil, nil
+	}
+	var existingHash, status string
+	var response []byte
+	err = s.Pool.QueryRow(ctx, `SELECT request_hash,status,response_payload FROM binancepay_v2_refunds WHERE idempotency_key=$1`, key).Scan(&existingHash, &status, &response)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if existingHash != hash || status == "processing" || len(response) == 0 {
+		return nil, core.ErrConflict
+	}
+	var refund core.ProviderRefund
+	if err = json.Unmarshal(response, &refund); err != nil {
+		return nil, err
+	}
+	return &refund, nil
+}
+
+func (s *Store) CompleteRefund(ctx context.Context, key string, r core.ProviderRefund, providerResponse []byte) error {
+	encoded, _ := json.Marshal(r)
+	data, _ := json.Marshal(r.ProviderData)
+	result, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_refunds SET provider_refund_id=$2,status=$3,raw_status=$4,provider_data=$5,response_payload=$6,provider_response=$7,observed_at=$8,updated_at=now() WHERE idempotency_key=$1`, key, r.ProviderRefundID, r.Status, r.RawStatus, data, encoded, providerResponse, r.ObservedAt)
+	if err == nil && result.RowsAffected() == 0 {
+		return core.ErrNotFound
+	}
+	return err
+}
+func (s *Store) FailRefund(ctx context.Context, key, message string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_refunds SET status='failed',error_message=$2,updated_at=now() WHERE idempotency_key=$1`, key, message)
+	return err
+}
+func (s *Store) FindRefund(ctx context.Context, connection, id string) (core.ProviderRefund, error) {
+	var r core.ProviderRefund
+	var data []byte
+	err := s.Pool.QueryRow(ctx, `SELECT refund_id,transaction_id,provider_connection_id,provider_refund_id,status,raw_status,amount,currency,observed_at,provider_data FROM binancepay_v2_refunds WHERE provider_connection_id=$1 AND (provider_refund_id=$2 OR refund_id=$2)`, connection, id).Scan(&r.RefundID, &r.TransactionID, &r.ProviderConnectionID, &r.ProviderRefundID, &r.Status, &r.RawStatus, &r.Amount, &r.Currency, &r.ObservedAt, &data)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return r, core.ErrNotFound
+	}
+	r.Provider = "binancepay"
+	_ = json.Unmarshal(data, &r.ProviderData)
+	return r, err
+}
+
 func nullableTime(value time.Time) any {
 	if value.IsZero() {
 		return nil

@@ -116,6 +116,73 @@ func (s *Service) Cancel(ctx context.Context, connectionID, providerPaymentID st
 	return payment, err
 }
 
+func (s *Service) CreateRefund(ctx context.Context, providerPaymentID, key string, cmd core.CreateRefundCommand) (core.ProviderRefund, error) {
+	if key == "" || cmd.RefundID == "" || cmd.TransactionID == "" || cmd.ProviderConnectionID == "" || cmd.Amount == "" || cmd.Currency == "" {
+		return core.ProviderRefund{}, fmt.Errorf("missing required field")
+	}
+	client, ok := s.clients[cmd.ProviderConnectionID]
+	if !ok {
+		return core.ProviderRefund{}, fmt.Errorf("unknown provider connection")
+	}
+	payment, err := s.store.FindPayment(ctx, cmd.ProviderConnectionID, providerPaymentID)
+	if err != nil {
+		return core.ProviderRefund{}, err
+	}
+	if payment.TransactionID != cmd.TransactionID || !strings.EqualFold(payment.Currency, cmd.Currency) {
+		return core.ProviderRefund{}, core.ErrConflict
+	}
+	body, _ := json.Marshal(cmd)
+	hash := fmt.Sprintf("%x", sha256.Sum256(body))
+	previous, err := s.store.ReserveRefund(ctx, key, hash, body, cmd)
+	if err != nil {
+		return core.ProviderRefund{}, err
+	}
+	if previous != nil {
+		return *previous, nil
+	}
+	requestID := strings.ReplaceAll(cmd.RefundID, "-", "")
+	response, err := client.RefundOrder(ctx, binancepay.RefundOrderRequest{RefundRequestID: requestID, PrepayID: providerPaymentID, RefundAmount: cmd.Amount, RefundReason: cmd.Reason})
+	if err != nil {
+		_ = s.store.FailRefund(ctx, key, err.Error())
+		return core.ProviderRefund{}, err
+	}
+	refund := core.ProviderRefund{RefundID: cmd.RefundID, TransactionID: cmd.TransactionID, Provider: "binancepay", ProviderConnectionID: cmd.ProviderConnectionID, ProviderRefundID: response.Data.RefundID.String(), Status: normalizeRefundStatus(response.Data.RefundStatus), RawStatus: response.Data.RefundStatus, Amount: cmd.Amount, Currency: strings.ToUpper(cmd.Currency), ObservedAt: s.now().UTC(), ProviderData: map[string]any{"refundRequestId": requestID}}
+	if err = s.store.CompleteRefund(ctx, key, refund, response.Raw); err != nil {
+		return core.ProviderRefund{}, err
+	}
+	return refund, nil
+}
+func (s *Service) GetRefund(ctx context.Context, connectionID, refundID string) (core.ProviderRefund, error) {
+	client, ok := s.clients[connectionID]
+	if !ok {
+		return core.ProviderRefund{}, fmt.Errorf("unknown provider connection")
+	}
+	refund, err := s.store.FindRefund(ctx, connectionID, refundID)
+	if err != nil {
+		return refund, err
+	}
+	requestID, _ := refund.ProviderData["refundRequestId"].(string)
+	response, err := client.QueryRefund(ctx, requestID)
+	if err != nil {
+		return refund, err
+	}
+	refund.Status, refund.RawStatus, refund.ObservedAt = normalizeRefundStatus(response.Data.RefundStatus), response.Data.RefundStatus, s.now().UTC()
+	if id := response.Data.RefundID.String(); id != "" {
+		refund.ProviderRefundID = id
+	}
+	return refund, nil
+}
+func normalizeRefundStatus(v string) string {
+	switch strings.ToUpper(v) {
+	case "REFUNDED", "REFUND_SUCCESS":
+		return "confirmed"
+	case "CANCELLED", "REFUND_FAIL", "FAILED":
+		return "failed"
+	default:
+		return "pending"
+	}
+}
+
 func (s *Service) validate(cmd core.CreatePaymentCommand, key string) (*binancepay.Client, error) {
 	if key == "" || cmd.TransactionID == "" || cmd.ProviderConnectionID == "" || cmd.Amount == "" || cmd.Currency == "" {
 		return nil, fmt.Errorf("missing required field")

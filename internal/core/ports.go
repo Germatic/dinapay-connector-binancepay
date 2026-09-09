@@ -18,4 +18,8 @@ type Store interface {
 	FindPaymentByReference(context.Context, string, string) (ProviderPayment, error)
 	UpdateStatus(context.Context, string, string, string, string) error
 	RecordProviderEvent(context.Context, ProviderEvent, []byte) (bool, error)
+	ReserveRefund(context.Context, string, string, []byte, CreateRefundCommand) (*ProviderRefund, error)
+	CompleteRefund(context.Context, string, ProviderRefund, []byte) error
+	FailRefund(context.Context, string, string) error
+	FindRefund(context.Context, string, string) (ProviderRefund, error)
 }

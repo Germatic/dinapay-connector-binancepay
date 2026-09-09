@@ -111,6 +111,27 @@ type CloseOrderResponse struct {
 	Data         bool   `json:"data"`
 	ErrorMessage string `json:"errorMessage"`
 }
+type RefundOrderRequest struct {
+	RefundRequestID string `json:"refundRequestId"`
+	PrepayID        string `json:"prepayId"`
+	RefundAmount    string `json:"refundAmount"`
+	RefundReason    string `json:"refundReason,omitempty"`
+}
+type RefundResult struct {
+	RefundID        json.Number `json:"refundId"`
+	RefundRequestID string      `json:"refundRequestId"`
+	PrepayID        string      `json:"prepayId"`
+	RefundAmount    string      `json:"refundAmount"`
+	RefundedAmount  string      `json:"refundedAmount"`
+	RefundStatus    string      `json:"refundStatus"`
+}
+type RefundResponse struct {
+	Status       string          `json:"status"`
+	Code         string          `json:"code"`
+	Data         RefundResult    `json:"data"`
+	ErrorMessage string          `json:"errorMessage"`
+	Raw          json.RawMessage `json:"-"`
+}
 
 func (c *Client) CreateOrder(ctx context.Context, in CreateOrderRequest) (CreateOrderResponse, error) {
 	var out CreateOrderResponse
@@ -149,6 +170,24 @@ func (c *Client) CloseOrder(ctx context.Context, tradeNo, prepayID string) (Clos
 	_, err := c.call(ctx, "/binancepay/openapi/order/close", payload, &out)
 	if err == nil && (out.Status != "SUCCESS" || !out.Data) {
 		err = fmt.Errorf("binancepay close failed: %s %s", out.Code, out.ErrorMessage)
+	}
+	return out, err
+}
+func (c *Client) RefundOrder(ctx context.Context, in RefundOrderRequest) (RefundResponse, error) {
+	var out RefundResponse
+	raw, err := c.call(ctx, "/binancepay/openapi/order/refund", in, &out)
+	out.Raw = raw
+	if err == nil && out.Status != "SUCCESS" {
+		err = fmt.Errorf("binancepay refund failed: %s %s", out.Code, out.ErrorMessage)
+	}
+	return out, err
+}
+func (c *Client) QueryRefund(ctx context.Context, requestID string) (RefundResponse, error) {
+	var out RefundResponse
+	raw, err := c.call(ctx, "/binancepay/openapi/order/refund/query", map[string]string{"refundRequestId": requestID}, &out)
+	out.Raw = raw
+	if err == nil && out.Status != "SUCCESS" {
+		err = fmt.Errorf("binancepay refund query failed: %s %s", out.Code, out.ErrorMessage)
 	}
 	return out, err
 }
