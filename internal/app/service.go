@@ -68,9 +68,9 @@ func (s *Service) Create(ctx context.Context, cmd core.CreatePaymentCommand, ide
 	}
 	payment := core.ProviderPayment{
 		TransactionID: cmd.TransactionID, Provider: "binancepay", ProviderConnectionID: cmd.ProviderConnectionID,
-		ProviderPaymentID: response.Data.PrepayID, ProviderReference: tradeNo, Status: "started", RawStatus: "INITIAL",
+		ProviderPaymentID: response.Data.PrepayID, ProviderReference: tradeNo, Status: "created", RawStatus: "INITIAL",
 		ObservedAt: s.now().UTC(), ExpiresAt: expiresAt, Amount: cmd.Amount, Currency: strings.ToUpper(cmd.Currency),
-		Completion:   map[string]any{"type": "redirect", "actionUrl": first(response.Data.UniversalURL, response.Data.CheckoutURL), "links": map[string]string{"universal": response.Data.UniversalURL, "app": response.Data.Deeplink, "web": response.Data.CheckoutURL}, "qrContent": response.Data.QRContent, "qrImageUrl": response.Data.QRCodeLink},
+		Completion:   redirectCompletion(response.Data),
 		ProviderData: map[string]any{"merchantTradeNo": tradeNo},
 	}
 	if err := s.store.CompleteCreate(ctx, idempotencyKey, payment, response.Raw); err != nil {
@@ -135,6 +135,10 @@ func (s *Service) validate(cmd core.CreatePaymentCommand, key string) (*binancep
 
 func NormalizeStatus(status string) string {
 	switch strings.ToUpper(status) {
+	case "INITIAL":
+		return "created"
+	case "PENDING", "PAID":
+		return "pending"
 	case "PAY_SUCCESS":
 		return "confirmed"
 	case "PAY_CLOSED":
@@ -142,15 +146,31 @@ func NormalizeStatus(status string) string {
 	case "PAY_FAIL":
 		return "failed"
 	default:
-		return "started"
+		return "pending"
 	}
 }
 
-func first(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
+func nonEmptyLinks(universal, app, web string) map[string]string {
+	links := map[string]string{}
+	if universal != "" {
+		links["universal"] = universal
 	}
-	return ""
+	if app != "" {
+		links["app"] = app
+	}
+	if web != "" {
+		links["web"] = web
+	}
+	return links
+}
+
+func redirectCompletion(data binancepay.CreateOrderData) map[string]any {
+	completion := map[string]any{"type": "redirect", "links": nonEmptyLinks(data.UniversalURL, data.Deeplink, data.CheckoutURL)}
+	if data.QRContent != "" {
+		completion["qrContent"] = data.QRContent
+	}
+	if data.QRCodeLink != "" {
+		completion["qrImageUrl"] = data.QRCodeLink
+	}
+	return completion
 }

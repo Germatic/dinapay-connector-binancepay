@@ -29,6 +29,12 @@ type CreatePaymentCommand struct {
 	Customer             map[string]any    `json:"customer"`
 	Metadata             map[string]any    `json:"metadata,omitempty"`
 }
+type CancelPaymentCommand struct {
+	OperationID          string `json:"operationId"`
+	TransactionID        string `json:"transactionId"`
+	ProviderConnectionID string `json:"providerConnectionId"`
+	Reason               string `json:"reason,omitempty"`
+}
 type ProviderPayment struct {
 	TransactionID        string         `json:"transactionId"`
 	Provider             string         `json:"provider"`
