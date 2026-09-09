@@ -173,7 +173,7 @@ func (s *Store) MarkFailed(ctx context.Context, id, message string) error {
 }
 
 func (s *Store) ReserveRefund(ctx context.Context, key, hash string, payload []byte, cmd core.CreateRefundCommand) (*core.ProviderRefund, error) {
-	result, err := s.Pool.Exec(ctx, `INSERT INTO binancepay_v2_refunds(refund_id,transaction_id,provider_connection_id,provider_refund_id,refund_request_id,idempotency_key,request_hash,request_payload,amount,currency,status,raw_status,observed_at) VALUES($1,$2,$3,'',replace($1,'-',''),$4,$5,$6,$7,$8,'processing','',now()) ON CONFLICT DO NOTHING`, cmd.RefundID, cmd.TransactionID, cmd.ProviderConnectionID, key, hash, payload, cmd.Amount, cmd.Currency)
+	result, err := s.Pool.Exec(ctx, `INSERT INTO binancepay_v2_refunds(refund_id,transaction_id,provider_connection_id,provider_refund_id,refund_request_id,idempotency_key,request_hash,request_payload,amount,currency,status,raw_status,provider_data,observed_at) VALUES($1,$2,$3,'',replace($1,'-',''),$4,$5,$6,$7,$8,'processing','',jsonb_build_object('refundRequestId',replace($1,'-','')),now()) ON CONFLICT DO NOTHING`, cmd.RefundID, cmd.TransactionID, cmd.ProviderConnectionID, key, hash, payload, cmd.Amount, cmd.Currency)
 	if err != nil {
 		return nil, err
 	}
