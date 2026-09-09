@@ -28,8 +28,6 @@ CREATE TABLE IF NOT EXISTS binancepay_v2_orders (
   PRIMARY KEY (provider_connection_id, provider_payment_id),
   UNIQUE (provider_connection_id, provider_reference)
 );
-ALTER TABLE binancepay_v2_refunds ADD COLUMN IF NOT EXISTS response_payload jsonb;
-
 CREATE TABLE IF NOT EXISTS binancepay_v2_inbound_events (
   provider_connection_id text NOT NULL,
   event_id text NOT NULL,
@@ -68,3 +66,5 @@ CREATE TABLE IF NOT EXISTS binancepay_v2_refunds (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE binancepay_v2_refunds ADD COLUMN IF NOT EXISTS response_payload jsonb;
