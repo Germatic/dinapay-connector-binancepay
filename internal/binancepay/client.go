@@ -26,6 +26,11 @@ func New(baseURL, apiKey, secretKey, proxyURL string) (*Client, error) {
 		baseURL = "https://bpay.binanceapi.com"
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 64
+	transport.MaxIdleConnsPerHost = 16
+	transport.MaxConnsPerHost = 32
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.ResponseHeaderTimeout = 15 * time.Second
 	if strings.TrimSpace(proxyURL) != "" {
 		u, err := url.Parse(proxyURL)
 		if err != nil {

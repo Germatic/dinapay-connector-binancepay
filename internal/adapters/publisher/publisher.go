@@ -19,7 +19,13 @@ type Publisher struct {
 }
 
 func New(store *postgres.Store, baseURL, token string) *Publisher {
-	return &Publisher{store: store, endpoint: strings.TrimRight(baseURL, "/") + "/internal/v1/provider-events", token: token, client: &http.Client{Timeout: 10 * time.Second}}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 32
+	transport.MaxIdleConnsPerHost = 16
+	transport.MaxConnsPerHost = 32
+	transport.IdleConnTimeout = 90 * time.Second
+	transport.ResponseHeaderTimeout = 8 * time.Second
+	return &Publisher{store: store, endpoint: strings.TrimRight(baseURL, "/") + "/internal/v1/provider-events", token: token, client: &http.Client{Timeout: 10 * time.Second, Transport: transport}}
 }
 func (p *Publisher) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
