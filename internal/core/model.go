@@ -23,6 +23,7 @@ type CreatePaymentCommand struct {
 	Currency             string            `json:"currency"`
 	PaymentMethod        string            `json:"paymentMethod"`
 	Rail                 string            `json:"rail,omitempty"`
+	DestinationMode      string            `json:"destinationMode,omitempty"`
 	Description          string            `json:"description,omitempty"`
 	ExpiresAt            time.Time         `json:"expiresAt,omitempty"`
 	ReturnURLs           map[string]string `json:"returnUrls,omitempty"`
