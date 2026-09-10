@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Germatic/dinapay-connector-binancepay/internal/adapters/postgres"
+	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
 )
 
 type Publisher struct {
@@ -49,6 +50,12 @@ func (p *Publisher) flush(ctx context.Context) {
 		if err == nil {
 			req.Header.Set("Content-Type", "application/json")
 			req.Header.Set("Authorization", "Bearer "+p.token)
+			if requestID := core.RequestID(ctx); requestID != "" {
+				req.Header.Set("X-Request-Id", requestID)
+			}
+			if trace := core.Traceparent(ctx); trace != "" {
+				req.Header.Set("traceparent", trace)
+			}
 			var response *http.Response
 			response, err = p.client.Do(req)
 			if err == nil {

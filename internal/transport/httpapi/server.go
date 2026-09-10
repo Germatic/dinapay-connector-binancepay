@@ -1,10 +1,13 @@
 package httpapi
 
 import (
+	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +15,7 @@ import (
 	"github.com/Germatic/dinapay-connector-binancepay/internal/app"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/binancepay"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
+	"github.com/Germatic/dinapay-connector-binancepay/internal/observability"
 )
 
 type WebhookCredential struct{ HMACSecret, PublicKey string }
@@ -26,6 +30,7 @@ func New(service *app.Service, token string, credentials map[string]WebhookCrede
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "up"}) })
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "ready"}) })
+	mux.Handle("GET /metrics", observability.Handler())
 	mux.HandleFunc("GET /v1/capabilities", s.auth(s.capabilities))
 	mux.HandleFunc("POST /v1/payments", s.auth(s.create))
 	mux.HandleFunc("GET /v1/payments/{providerPaymentId}", s.auth(s.get))
@@ -33,7 +38,75 @@ func New(service *app.Service, token string, credentials map[string]WebhookCrede
 	mux.HandleFunc("POST /v1/payments/{providerPaymentId}/refunds", s.auth(s.refund))
 	mux.HandleFunc("GET /v1/refunds/{providerRefundId}", s.auth(s.getRefund))
 	mux.HandleFunc("POST /webhooks/binancepay/{connectionId}", s.webhook)
-	return mux
+	return observe(mux)
+}
+
+type statusWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *statusWriter) WriteHeader(status int) {
+	if w.wroteHeader {
+		return
+	}
+	w.wroteHeader = true
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+func observe(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		requestID := r.Header.Get("X-Request-Id")
+		if !validRequestID(requestID) {
+			requestID = randomHex(16)
+		}
+		trace := r.Header.Get("traceparent")
+		if !validTraceparent(trace) {
+			trace = fmt.Sprintf("00-%s-%s-01", randomHex(16), randomHex(8))
+		}
+		w.Header().Set("X-Request-Id", requestID)
+		w.Header().Set("traceparent", trace)
+		capture := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		request := r.WithContext(core.WithObservability(r.Context(), requestID, trace))
+		next.ServeHTTP(capture, request)
+		elapsed := time.Since(started)
+		observability.ObserveHTTP(r.Method, request.Pattern, capture.status, elapsed)
+		if r.URL.Path != "/health" && r.URL.Path != "/ready" && r.URL.Path != "/metrics" {
+			slog.Info("http request", "method", r.Method, "path", r.URL.Path, "status", capture.status, "duration_ms", elapsed.Milliseconds(), "request_id", requestID, "traceparent", trace)
+		}
+	})
+}
+func randomHex(size int) string {
+	raw := make([]byte, size)
+	_, _ = rand.Read(raw)
+	return fmt.Sprintf("%x", raw)
+}
+func validRequestID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, c := range value {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') && c != '-' && c != '_' && c != '.' {
+			return false
+		}
+	}
+	return true
+}
+func validTraceparent(value string) bool {
+	if len(value) != 55 || value[2] != '-' || value[35] != '-' || value[52] != '-' {
+		return false
+	}
+	for i, c := range value {
+		if i == 2 || i == 35 || i == 52 {
+			continue
+		}
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return value[3:35] != strings.Repeat("0", 32) && value[36:52] != strings.Repeat("0", 16)
 }
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
