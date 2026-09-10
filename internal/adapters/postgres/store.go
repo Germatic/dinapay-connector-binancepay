@@ -16,6 +16,7 @@ import (
 var migration string
 
 type Store struct{ Pool *pgxpool.Pool }
+type OperationalStats struct{ Nonterminal, NonterminalAgeSeconds, Outbox, OutboxAgeSeconds float64 }
 
 func Open(ctx context.Context, url string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, url)
@@ -34,6 +35,15 @@ func Open(ctx context.Context, url string) (*Store, error) {
 }
 
 func (s *Store) Close() { s.Pool.Close() }
+func (s *Store) Stats(ctx context.Context) (OperationalStats, error) {
+	var value OperationalStats
+	err := s.Pool.QueryRow(ctx, `SELECT count(*)::float8,COALESCE(EXTRACT(EPOCH FROM now()-min(updated_at)),0)::float8 FROM binancepay_v2_orders WHERE status IN ('created','pending')`).Scan(&value.Nonterminal, &value.NonterminalAgeSeconds)
+	if err != nil {
+		return value, err
+	}
+	err = s.Pool.QueryRow(ctx, `SELECT count(*)::float8,COALESCE(EXTRACT(EPOCH FROM now()-min(created_at)),0)::float8 FROM binancepay_v2_event_outbox WHERE published_at IS NULL`).Scan(&value.Outbox, &value.OutboxAgeSeconds)
+	return value, err
+}
 
 func (s *Store) ReserveCreate(ctx context.Context, key, hash string, payload []byte) (*core.ProviderPayment, error) {
 	result, err := s.Pool.Exec(ctx, `INSERT INTO binancepay_v2_operations(idempotency_key,request_hash,request_payload,status) VALUES($1,$2,$3,'processing') ON CONFLICT DO NOTHING`, key, hash, payload)

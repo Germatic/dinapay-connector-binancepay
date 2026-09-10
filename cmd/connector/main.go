@@ -15,6 +15,7 @@ import (
 	"github.com/Germatic/dinapay-connector-binancepay/internal/app"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/binancepay"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
+	"github.com/Germatic/dinapay-connector-binancepay/internal/observability"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/transport/httpapi"
 )
 
@@ -48,6 +49,7 @@ func main() {
 	defer store.Close()
 	service := app.New(store, clients, required("WEBHOOK_BASE_URL"))
 	go publisher.New(store, required("DINAPAY_V2_URL"), serviceToken).Run(ctx)
+	go collectMetrics(ctx, store)
 	server := &http.Server{Addr: ":" + env("PORT", "8092"), Handler: httpapi.New(service, serviceToken, credentials), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
 		<-ctx.Done()
@@ -58,6 +60,21 @@ func main() {
 	log.Printf("Binance Pay connector listening on %s", server.Addr)
 	if err = server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+}
+func collectMetrics(ctx context.Context, store *postgres.Store) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		stats, err := store.Stats(ctx)
+		if err == nil {
+			observability.SetPersistent(stats.Nonterminal, stats.NonterminalAgeSeconds, stats.Outbox, stats.OutboxAgeSeconds)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 func required(name string) string {

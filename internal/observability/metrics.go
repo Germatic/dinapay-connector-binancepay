@@ -30,7 +30,8 @@ var registry = struct {
 	provider          map[providerKey]uint64
 	providerDurations map[string]histogram
 	operations        map[string]uint64
-}{requests: map[requestKey]uint64{}, durations: map[durationKey]histogram{}, provider: map[providerKey]uint64{}, providerDurations: map[string]histogram{}, operations: map[string]uint64{}}
+	gauges            map[string]float64
+}{requests: map[requestKey]uint64{}, durations: map[durationKey]histogram{}, provider: map[providerKey]uint64{}, providerDurations: map[string]histogram{}, operations: map[string]uint64{}, gauges: map[string]float64{}}
 
 func ObserveProvider(operation string, err error, elapsed time.Duration) {
 	result := "success"
@@ -60,6 +61,14 @@ func Publish(result string) {
 	registry.Lock()
 	defer registry.Unlock()
 	registry.operations["publish:"+result]++
+}
+func SetPersistent(nonterminal, nonterminalAge, outbox, outboxAge float64) {
+	registry.Lock()
+	defer registry.Unlock()
+	registry.gauges["dinapay_connector_nonterminal_payments"] = nonterminal
+	registry.gauges["dinapay_connector_nonterminal_oldest_seconds"] = nonterminalAge
+	registry.gauges["dinapay_connector_outbox_pending"] = outbox
+	registry.gauges["dinapay_connector_outbox_oldest_seconds"] = outboxAge
 }
 
 func ObserveHTTP(method, route string, status int, elapsed time.Duration) {
@@ -109,6 +118,9 @@ func Handler() http.Handler {
 			parts := strings.SplitN(key, ":", 2)
 			name := map[string]string{"webhook": "dinapay_provider_webhooks_total", "publish": "dinapay_connector_event_publications_total"}[parts[0]]
 			lines = append(lines, fmt.Sprintf("%s{provider=\"binancepay\",result=%q} %d", name, parts[1], v))
+		}
+		for name, value := range registry.gauges {
+			lines = append(lines, fmt.Sprintf("%s{provider=\"binancepay\"} %g", name, value))
 		}
 		sort.Strings(lines)
 		_, _ = fmt.Fprintln(w, strings.Join(lines, "\n"))
