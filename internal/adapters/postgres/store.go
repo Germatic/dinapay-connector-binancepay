@@ -16,7 +16,7 @@ import (
 var migration string
 
 type Store struct{ Pool *pgxpool.Pool }
-type OperationalStats struct{ Nonterminal, NonterminalAgeSeconds, Outbox, OutboxAgeSeconds float64 }
+type OperationalStats struct{ Nonterminal, NonterminalAgeSeconds, Reconciliation, ReconciliationAgeSeconds, Outbox, OutboxAgeSeconds float64 }
 
 func Open(ctx context.Context, url string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, url)
@@ -38,6 +38,10 @@ func (s *Store) Close() { s.Pool.Close() }
 func (s *Store) Stats(ctx context.Context) (OperationalStats, error) {
 	var value OperationalStats
 	err := s.Pool.QueryRow(ctx, `SELECT count(*)::float8,COALESCE(EXTRACT(EPOCH FROM now()-min(updated_at)),0)::float8 FROM binancepay_v2_orders WHERE status IN ('created','pending')`).Scan(&value.Nonterminal, &value.NonterminalAgeSeconds)
+	if err != nil {
+		return value, err
+	}
+	err = s.Pool.QueryRow(ctx, `SELECT count(*)::float8,COALESCE(EXTRACT(EPOCH FROM now()-min(next_reconcile_at)),0)::float8 FROM binancepay_v2_orders WHERE status IN ('created','pending') AND next_reconcile_at<=now()`).Scan(&value.Reconciliation, &value.ReconciliationAgeSeconds)
 	if err != nil {
 		return value, err
 	}
@@ -81,7 +85,7 @@ func (s *Store) CompleteCreate(ctx context.Context, key string, payment core.Pro
 	completion, _ := json.Marshal(payment.Completion)
 	data, _ := json.Marshal(payment.ProviderData)
 	encoded, _ := json.Marshal(payment)
-	_, err = tx.Exec(ctx, `INSERT INTO binancepay_v2_orders(provider_connection_id,provider_payment_id,provider_reference,transaction_id,amount,currency,status,raw_status,expires_at,completion,provider_data,provider_response,observed_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, payment.ProviderConnectionID, payment.ProviderPaymentID, payment.ProviderReference, payment.TransactionID, payment.Amount, payment.Currency, payment.Status, payment.RawStatus, nullableTime(payment.ExpiresAt), completion, data, providerResponse, payment.ObservedAt)
+	_, err = tx.Exec(ctx, `INSERT INTO binancepay_v2_orders(provider_connection_id,provider_payment_id,provider_reference,transaction_id,amount,currency,status,raw_status,expires_at,completion,provider_data,provider_response,observed_at,next_reconcile_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,CASE WHEN $7 IN ('created','pending') THEN now()+interval '10 seconds' ELSE NULL END)`, payment.ProviderConnectionID, payment.ProviderPaymentID, payment.ProviderReference, payment.TransactionID, payment.Amount, payment.Currency, payment.Status, payment.RawStatus, nullableTime(payment.ExpiresAt), completion, data, providerResponse, payment.ObservedAt)
 	if err != nil {
 		return err
 	}
@@ -123,10 +127,42 @@ func (s *Store) find(ctx context.Context, query string, args ...any) (core.Provi
 	return p, nil
 }
 func (s *Store) UpdateStatus(ctx context.Context, connection, id, status, raw string) error {
-	result, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_orders SET status=$3,raw_status=$4,observed_at=now(),updated_at=now() WHERE provider_connection_id=$1 AND provider_payment_id=$2`, connection, id, status, raw)
+	result, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_orders SET status=$3,raw_status=$4,observed_at=now(),next_reconcile_at=CASE WHEN $3 IN ('created','pending') THEN now()+interval '1 minute' ELSE NULL END,last_reconcile_error=NULL,updated_at=now() WHERE provider_connection_id=$1 AND provider_payment_id=$2`, connection, id, status, raw)
 	if err == nil && result.RowsAffected() == 0 {
 		return core.ErrNotFound
 	}
+	return err
+}
+func (s *Store) ClaimPaymentsForReconciliation(ctx context.Context, limit int) ([]core.ProviderPayment, error) {
+	rows, err := s.Pool.Query(ctx, `WITH claimed AS (SELECT provider_connection_id,provider_payment_id FROM binancepay_v2_orders WHERE status IN ('created','pending') AND next_reconcile_at<=now() ORDER BY next_reconcile_at LIMIT $1 FOR UPDATE SKIP LOCKED) UPDATE binancepay_v2_orders o SET next_reconcile_at=now()+interval '1 minute',reconcile_attempts=reconcile_attempts+1 FROM claimed WHERE o.provider_connection_id=claimed.provider_connection_id AND o.provider_payment_id=claimed.provider_payment_id RETURNING o.transaction_id,o.provider_connection_id,o.provider_payment_id,o.provider_reference,o.status,o.raw_status,o.observed_at,o.expires_at,o.completion,o.provider_data,o.amount,o.currency`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []core.ProviderPayment
+	for rows.Next() {
+		var p core.ProviderPayment
+		var expires *time.Time
+		var completion, data []byte
+		if err = rows.Scan(&p.TransactionID, &p.ProviderConnectionID, &p.ProviderPaymentID, &p.ProviderReference, &p.Status, &p.RawStatus, &p.ObservedAt, &expires, &completion, &data, &p.Amount, &p.Currency); err != nil {
+			return nil, err
+		}
+		p.Provider = "binancepay"
+		if expires != nil {
+			p.ExpiresAt = *expires
+		}
+		_ = json.Unmarshal(completion, &p.Completion)
+		_ = json.Unmarshal(data, &p.ProviderData)
+		result = append(result, p)
+	}
+	return result, rows.Err()
+}
+func (s *Store) UpdatePaymentObservation(ctx context.Context, p core.ProviderPayment) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_orders SET status=$3,raw_status=$4,observed_at=$5,next_reconcile_at=CASE WHEN $3 IN ('created','pending') THEN now()+interval '1 minute' ELSE NULL END,last_reconcile_error=NULL,updated_at=now() WHERE provider_connection_id=$1 AND provider_payment_id=$2`, p.ProviderConnectionID, p.ProviderPaymentID, p.Status, p.RawStatus, p.ObservedAt)
+	return err
+}
+func (s *Store) RetryPaymentReconciliation(ctx context.Context, connection, id, message string) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_orders SET last_reconcile_error=$3,next_reconcile_at=now()+least(interval '1 hour',interval '10 seconds'*power(2,least(reconcile_attempts,8))),updated_at=now() WHERE provider_connection_id=$1 AND provider_payment_id=$2 AND status IN ('created','pending')`, connection, id, truncate(message, 1000))
 	return err
 }
 func (s *Store) RecordProviderEvent(ctx context.Context, event core.ProviderEvent, raw []byte) (bool, error) {
@@ -146,7 +182,7 @@ func (s *Store) RecordProviderEvent(ctx context.Context, event core.ProviderEven
 	if _, err = tx.Exec(ctx, `INSERT INTO binancepay_v2_event_outbox(event_id,payload) VALUES($1,$2)`, event.EventID, payload); err != nil {
 		return false, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE binancepay_v2_orders SET status=$3,raw_status=$4,observed_at=$5,updated_at=now() WHERE provider_connection_id=$1 AND provider_payment_id=$2`, event.ProviderConnectionID, event.ProviderPaymentID, event.Data.Status, event.Data.RawStatus, event.ObservedAt); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE binancepay_v2_orders SET status=$3,raw_status=$4,observed_at=$5,next_reconcile_at=CASE WHEN $3 IN ('created','pending') THEN now()+interval '1 minute' ELSE NULL END,last_reconcile_error=NULL,updated_at=now() WHERE provider_connection_id=$1 AND provider_payment_id=$2`, event.ProviderConnectionID, event.ProviderPaymentID, event.Data.Status, event.Data.RawStatus, event.ObservedAt); err != nil {
 		return false, err
 	}
 	return true, tx.Commit(ctx)
@@ -239,4 +275,11 @@ func nullableTime(value time.Time) any {
 		return nil
 	}
 	return value
+}
+
+func truncate(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return value[:limit]
 }

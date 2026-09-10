@@ -62,11 +62,18 @@ func Publish(result string) {
 	defer registry.Unlock()
 	registry.operations["publish:"+result]++
 }
-func SetPersistent(nonterminal, nonterminalAge, outbox, outboxAge float64) {
+func Reconciliation(result string) {
+	registry.Lock()
+	defer registry.Unlock()
+	registry.operations["reconciliation:"+result]++
+}
+func SetPersistent(nonterminal, nonterminalAge, reconciliation, reconciliationAge, outbox, outboxAge float64) {
 	registry.Lock()
 	defer registry.Unlock()
 	registry.gauges["dinapay_connector_nonterminal_payments"] = nonterminal
 	registry.gauges["dinapay_connector_nonterminal_oldest_seconds"] = nonterminalAge
+	registry.gauges["dinapay_reconciliation_pending"] = reconciliation
+	registry.gauges["dinapay_reconciliation_oldest_seconds"] = reconciliationAge
 	registry.gauges["dinapay_connector_outbox_pending"] = outbox
 	registry.gauges["dinapay_connector_outbox_oldest_seconds"] = outboxAge
 }
@@ -116,7 +123,7 @@ func Handler() http.Handler {
 		}
 		for key, v := range registry.operations {
 			parts := strings.SplitN(key, ":", 2)
-			name := map[string]string{"webhook": "dinapay_provider_webhooks_total", "publish": "dinapay_connector_event_publications_total"}[parts[0]]
+			name := map[string]string{"webhook": "dinapay_provider_webhooks_total", "publish": "dinapay_connector_event_publications_total", "reconciliation": "dinapay_reconciliation_attempts_total"}[parts[0]]
 			lines = append(lines, fmt.Sprintf("%s{provider=\"binancepay\",result=%q} %d", name, parts[1], v))
 		}
 		for name, value := range registry.gauges {

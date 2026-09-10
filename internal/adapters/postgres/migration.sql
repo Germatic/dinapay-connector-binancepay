@@ -24,10 +24,18 @@ CREATE TABLE IF NOT EXISTS binancepay_v2_orders (
   response_payload jsonb,
   provider_response jsonb,
   observed_at timestamptz NOT NULL,
+  reconcile_attempts integer NOT NULL DEFAULT 0,
+  next_reconcile_at timestamptz,
+  last_reconcile_error text,
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (provider_connection_id, provider_payment_id),
   UNIQUE (provider_connection_id, provider_reference)
 );
+ALTER TABLE binancepay_v2_orders ADD COLUMN IF NOT EXISTS reconcile_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE binancepay_v2_orders ADD COLUMN IF NOT EXISTS next_reconcile_at timestamptz;
+ALTER TABLE binancepay_v2_orders ADD COLUMN IF NOT EXISTS last_reconcile_error text;
+CREATE INDEX IF NOT EXISTS binancepay_v2_order_reconcile_idx ON binancepay_v2_orders(next_reconcile_at) WHERE status IN ('created','pending');
+UPDATE binancepay_v2_orders SET next_reconcile_at=now() WHERE status IN ('created','pending') AND next_reconcile_at IS NULL;
 CREATE TABLE IF NOT EXISTS binancepay_v2_inbound_events (
   provider_connection_id text NOT NULL,
   event_id text NOT NULL,

@@ -18,10 +18,19 @@ type Service struct {
 	clients    map[string]*binancepay.Client
 	webhookURL string
 	now        func() time.Time
+	queryOrder func(context.Context, string, string, string) (binancepay.QueryOrderResponse, error)
 }
 
 func New(store core.Store, clients map[string]*binancepay.Client, webhookURL string) *Service {
-	return &Service{store: store, clients: clients, webhookURL: strings.TrimRight(webhookURL, "/"), now: time.Now}
+	service := &Service{store: store, clients: clients, webhookURL: strings.TrimRight(webhookURL, "/"), now: time.Now}
+	service.queryOrder = func(ctx context.Context, connectionID, tradeNo, prepayID string) (binancepay.QueryOrderResponse, error) {
+		client, ok := clients[connectionID]
+		if !ok {
+			return binancepay.QueryOrderResponse{}, fmt.Errorf("unknown provider connection")
+		}
+		return client.QueryOrder(ctx, tradeNo, prepayID)
+	}
+	return service
 }
 
 func (s *Service) Create(ctx context.Context, cmd core.CreatePaymentCommand, idempotencyKey string) (core.ProviderPayment, error) {

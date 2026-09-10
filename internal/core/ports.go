@@ -17,6 +17,9 @@ type Store interface {
 	FindPayment(context.Context, string, string) (ProviderPayment, error)
 	FindPaymentByReference(context.Context, string, string) (ProviderPayment, error)
 	UpdateStatus(context.Context, string, string, string, string) error
+	ClaimPaymentsForReconciliation(context.Context, int) ([]ProviderPayment, error)
+	UpdatePaymentObservation(context.Context, ProviderPayment) error
+	RetryPaymentReconciliation(context.Context, string, string, string) error
 	RecordProviderEvent(context.Context, ProviderEvent, []byte) (bool, error)
 	ReserveRefund(context.Context, string, string, []byte, CreateRefundCommand) (*ProviderRefund, error)
 	CompleteRefund(context.Context, string, ProviderRefund, []byte) error

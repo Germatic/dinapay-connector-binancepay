@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -49,6 +50,7 @@ func main() {
 	defer store.Close()
 	service := app.New(store, clients, required("WEBHOOK_BASE_URL"))
 	go publisher.New(store, required("DINAPAY_V2_URL"), serviceToken).Run(ctx)
+	go service.RunReconciler(ctx, envInt("RECONCILE_CONCURRENCY", 8))
 	go collectMetrics(ctx, store)
 	server := &http.Server{Addr: ":" + env("PORT", "8092"), Handler: httpapi.New(service, serviceToken, credentials), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 25 * time.Second, IdleTimeout: 60 * time.Second}
 	go func() {
@@ -68,7 +70,7 @@ func collectMetrics(ctx context.Context, store *postgres.Store) {
 	for {
 		stats, err := store.Stats(ctx)
 		if err == nil {
-			observability.SetPersistent(stats.Nonterminal, stats.NonterminalAgeSeconds, stats.Outbox, stats.OutboxAgeSeconds)
+			observability.SetPersistent(stats.Nonterminal, stats.NonterminalAgeSeconds, stats.Reconciliation, stats.ReconciliationAgeSeconds, stats.Outbox, stats.OutboxAgeSeconds)
 		}
 		select {
 		case <-ctx.Done():
@@ -76,6 +78,13 @@ func collectMetrics(ctx context.Context, store *postgres.Store) {
 		case <-ticker.C:
 		}
 	}
+}
+func envInt(name string, fallback int) int {
+	value, err := strconv.Atoi(os.Getenv(name))
+	if err != nil || value < 1 {
+		return fallback
+	}
+	return value
 }
 func required(name string) string {
 	value := os.Getenv(name)
