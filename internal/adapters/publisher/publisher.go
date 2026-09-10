@@ -11,6 +11,7 @@ import (
 
 	"github.com/Germatic/dinapay-connector-binancepay/internal/adapters/postgres"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
+	"github.com/Germatic/dinapay-connector-binancepay/internal/observability"
 )
 
 type Publisher struct {
@@ -67,9 +68,11 @@ func (p *Publisher) flush(ctx context.Context) {
 			}
 		}
 		if err != nil {
+			observability.Publish("error")
 			_ = p.store.MarkFailed(ctx, item.EventID, err.Error())
 			continue
 		}
 		_ = p.store.MarkPublished(ctx, item.EventID)
+		observability.Publish("success")
 	}
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Germatic/dinapay-connector-binancepay/internal/binancepay"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
+	"github.com/Germatic/dinapay-connector-binancepay/internal/observability"
 )
 
 type Service struct {
@@ -57,7 +58,9 @@ func (s *Service) Create(ctx context.Context, cmd core.CreatePaymentCommand, ide
 	if !cmd.ExpiresAt.IsZero() {
 		request.OrderExpireTime = cmd.ExpiresAt.UnixMilli()
 	}
+	started := time.Now()
 	response, err := client.CreateOrder(ctx, request)
+	observability.ObserveProvider("create_payment", err, time.Since(started))
 	if err != nil {
 		_ = s.store.FailCreate(ctx, idempotencyKey, err.Error())
 		return core.ProviderPayment{}, err
@@ -88,7 +91,9 @@ func (s *Service) Get(ctx context.Context, connectionID, providerPaymentID strin
 	if err != nil {
 		return payment, err
 	}
+	started := time.Now()
 	response, err := client.QueryOrder(ctx, payment.ProviderReference, providerPaymentID)
+	observability.ObserveProvider("get_payment", err, time.Since(started))
 	if err != nil {
 		return payment, err
 	}
@@ -108,7 +113,10 @@ func (s *Service) Cancel(ctx context.Context, connectionID, providerPaymentID st
 	if err != nil {
 		return payment, err
 	}
-	if _, err = client.CloseOrder(ctx, payment.ProviderReference, providerPaymentID); err != nil {
+	started := time.Now()
+	_, err = client.CloseOrder(ctx, payment.ProviderReference, providerPaymentID)
+	observability.ObserveProvider("cancel_payment", err, time.Since(started))
+	if err != nil {
 		return payment, err
 	}
 	payment.Status, payment.RawStatus, payment.ObservedAt = "cancelled", "PAY_CLOSED", s.now().UTC()
@@ -141,7 +149,9 @@ func (s *Service) CreateRefund(ctx context.Context, providerPaymentID, key strin
 		return *previous, nil
 	}
 	requestID := strings.ReplaceAll(cmd.RefundID, "-", "")
+	started := time.Now()
 	response, err := client.RefundOrder(ctx, binancepay.RefundOrderRequest{RefundRequestID: requestID, PrepayID: providerPaymentID, RefundAmount: cmd.Amount, RefundReason: cmd.Reason})
+	observability.ObserveProvider("create_refund", err, time.Since(started))
 	if err != nil {
 		_ = s.store.FailRefund(ctx, key, err.Error())
 		return core.ProviderRefund{}, err
@@ -162,7 +172,9 @@ func (s *Service) GetRefund(ctx context.Context, connectionID, refundID string) 
 		return refund, err
 	}
 	requestID, _ := refund.ProviderData["refundRequestId"].(string)
+	started := time.Now()
 	response, err := client.QueryRefund(ctx, requestID)
+	observability.ObserveProvider("get_refund", err, time.Since(started))
 	if err != nil {
 		return refund, err
 	}

@@ -200,14 +200,17 @@ func (s *Server) webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err = binancepay.VerifyWebhook(r.Header.Get("BinancePay-Timestamp"), r.Header.Get("BinancePay-Nonce"), r.Header.Get("BinancePay-Signature"), body, credential.HMACSecret, credential.PublicKey, time.Now()); err != nil {
+		observability.Webhook("rejected")
 		problem(w, 401, "invalid_signature", err.Error())
 		return
 	}
 	_, err = s.service.HandleWebhook(r.Context(), connection, body)
 	if err != nil && !errors.Is(err, core.ErrNotFound) {
+		observability.Webhook("rejected")
 		problem(w, 422, "webhook_rejected", err.Error())
 		return
 	}
+	observability.Webhook("accepted")
 	write(w, 200, map[string]string{"returnCode": "SUCCESS", "returnMessage": "OK"})
 }
 func decode(w http.ResponseWriter, r *http.Request, target any) error {
