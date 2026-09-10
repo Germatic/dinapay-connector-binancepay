@@ -128,7 +128,11 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 func (s *Server) capabilities(w http.ResponseWriter, _ *http.Request) {
-	write(w, 200, map[string]any{"provider": "binancepay", "operations": []string{"create", "get", "cancel", "refund", "get_refund"}, "paymentMethods": []string{"redirect"}, "currencies": []string{"USDT"}})
+	binding := core.BindingRequirement{Code: "merchant_sub_merchant", EntityType: "merchant", ExternalEntityType: "sub_merchant", Required: true, Cardinality: "one", ProvisioningMode: "external_registration"}
+	write(w, 200, core.Capabilities{Provider: "binancepay", ContractVersion: "1", Capabilities: []core.Capability{
+		{Operation: "payment", Countries: []string{"AR", "BR", "UY", "VE"}, Currencies: []string{"USDT"}, PaymentMethods: []string{"crypto_payment"}, Rails: []string{"binance_pay"}, Features: []string{"refund", "partial_refund", "cancel", "reconciliation"}, BindingRequirement: &core.BindingRequirement{EntityType: binding.EntityType, ExternalEntityType: binding.ExternalEntityType}, BindingRequirements: []core.BindingRequirement{binding}},
+		{Operation: "refund", Countries: []string{"AR", "BR", "UY", "VE"}, Currencies: []string{"USDT"}, PaymentMethods: []string{"crypto_payment"}, Rails: []string{"binance_pay"}, Features: []string{"partial_refund"}},
+	}})
 }
 func (s *Server) create(w http.ResponseWriter, r *http.Request) {
 	var cmd core.CreatePaymentCommand

@@ -13,6 +13,29 @@ type Binding struct {
 	ExternalEntityType string `json:"externalEntityType"`
 	ExternalEntityID   string `json:"externalEntityId"`
 }
+type Capabilities struct {
+	Provider        string       `json:"provider"`
+	ContractVersion string       `json:"contractVersion"`
+	Capabilities    []Capability `json:"capabilities"`
+}
+type Capability struct {
+	Operation           string               `json:"operation"`
+	Countries           []string             `json:"countries"`
+	Currencies          []string             `json:"currencies"`
+	PaymentMethods      []string             `json:"paymentMethods"`
+	Rails               []string             `json:"rails"`
+	Features            []string             `json:"features,omitempty"`
+	BindingRequirement  *BindingRequirement  `json:"bindingRequirement,omitempty"`
+	BindingRequirements []BindingRequirement `json:"bindingRequirements,omitempty"`
+}
+type BindingRequirement struct {
+	Code               string `json:"code,omitempty"`
+	EntityType         string `json:"entityType"`
+	ExternalEntityType string `json:"externalEntityType"`
+	Required           bool   `json:"required,omitempty"`
+	Cardinality        string `json:"cardinality,omitempty"`
+	ProvisioningMode   string `json:"provisioningMode,omitempty"`
+}
 type CreatePaymentCommand struct {
 	OperationID          string            `json:"operationId"`
 	TransactionID        string            `json:"transactionId"`
