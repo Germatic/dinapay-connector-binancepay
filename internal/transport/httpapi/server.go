@@ -30,7 +30,7 @@ func New(service *app.Service, token string, credentials map[string]WebhookCrede
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "up"}) })
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "ready"}) })
-	mux.Handle("GET /metrics", observability.Handler())
+	mux.Handle("GET /metrics", internalOnly(observability.Handler()))
 	mux.HandleFunc("GET /v1/capabilities", s.auth(s.capabilities))
 	mux.HandleFunc("POST /v1/payments", s.auth(s.create))
 	mux.HandleFunc("GET /v1/payments/{providerPaymentId}", s.auth(s.get))
@@ -39,6 +39,15 @@ func New(service *app.Service, token string, credentials map[string]WebhookCrede
 	mux.HandleFunc("GET /v1/refunds/{providerRefundId}", s.auth(s.getRefund))
 	mux.HandleFunc("POST /webhooks/binancepay/{connectionId}", s.webhook)
 	return observe(mux)
+}
+func internalOnly(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type statusWriter struct {
