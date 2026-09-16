@@ -11,6 +11,7 @@ import (
 	"github.com/Germatic/dinapay-connector-binancepay/internal/binancepay"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/observability"
+	contract "github.com/Germatic/dinapay-contracts/go/connectorcontract/failures"
 )
 
 type Service struct {
@@ -166,6 +167,7 @@ func (s *Service) CreateRefund(ctx context.Context, providerPaymentID, key strin
 		return core.ProviderRefund{}, err
 	}
 	refund := core.ProviderRefund{RefundID: cmd.RefundID, TransactionID: cmd.TransactionID, Provider: "binancepay", ProviderConnectionID: cmd.ProviderConnectionID, ProviderRefundID: response.Data.RefundID.String(), Status: normalizeRefundStatus(response.Data.RefundStatus), RawStatus: response.Data.RefundStatus, Amount: cmd.Amount, Currency: strings.ToUpper(cmd.Currency), ObservedAt: s.now().UTC(), ProviderData: map[string]any{"refundRequestId": requestID}}
+	normalizeRefundFailure(&refund)
 	if err = s.store.CompleteRefund(ctx, key, refund, response.Raw); err != nil {
 		return core.ProviderRefund{}, err
 	}
@@ -188,11 +190,27 @@ func (s *Service) GetRefund(ctx context.Context, connectionID, refundID string) 
 		return refund, err
 	}
 	refund.Status, refund.RawStatus, refund.ObservedAt = normalizeRefundStatus(response.Data.RefundStatus), response.Data.RefundStatus, s.now().UTC()
+	normalizeRefundFailure(&refund)
 	if id := response.Data.RefundID.String(); id != "" {
 		refund.ProviderRefundID = id
 	}
 	return refund, nil
 }
+
+func normalizeRefundFailure(refund *core.ProviderRefund) {
+	if refund == nil || (refund.Status != "failed" && refund.Status != "rejected") {
+		return
+	}
+	public := contract.NewRefund(contract.RefundRejected)
+	provider := contract.ProviderFailure{
+		Code:    refund.RawStatus,
+		Message: "Binance Pay returned a terminal refund status.",
+		Details: map[string]any{"rawStatus": refund.RawStatus},
+	}
+	refund.Failure = &public
+	refund.ProviderFailure = &provider
+}
+
 func normalizeRefundStatus(v string) string {
 	switch strings.ToUpper(v) {
 	case "REFUNDED", "REFUND_SUCCESS":
