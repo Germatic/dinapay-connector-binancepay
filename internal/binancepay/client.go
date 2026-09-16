@@ -21,6 +21,30 @@ type Client struct {
 	http                       *http.Client
 }
 
+// APIError preserves Binance Pay's stable business code separately from its
+// human-readable message. A failed API call is not automatically a terminal
+// payment failure; callers decide whether to retry or query the order.
+type APIError struct {
+	Operation  string
+	Code       string
+	Message    string
+	HTTPStatus int
+}
+
+func (e *APIError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("binancepay %s failed: %s %s", e.Operation, e.Code, e.Message)
+	}
+	return fmt.Sprintf("binancepay %s http %d: %s", e.Operation, e.HTTPStatus, e.Message)
+}
+
+func businessError(operation, status, code, message string) error {
+	if status == "SUCCESS" {
+		return nil
+	}
+	return &APIError{Operation: operation, Code: code, Message: message}
+}
+
 func New(baseURL, apiKey, secretKey, proxyURL string) (*Client, error) {
 	if baseURL == "" {
 		baseURL = "https://bpay.binanceapi.com"
@@ -142,8 +166,8 @@ func (c *Client) CreateOrder(ctx context.Context, in CreateOrderRequest) (Create
 	var out CreateOrderResponse
 	raw, err := c.call(ctx, "/binancepay/openapi/v3/order", in, &out)
 	out.Raw = raw
-	if err == nil && out.Status != "SUCCESS" {
-		err = fmt.Errorf("binancepay create failed: %s %s", out.Code, out.ErrorMessage)
+	if err == nil {
+		err = businessError("create", out.Status, out.Code, out.ErrorMessage)
 	}
 	return out, err
 }
@@ -158,8 +182,8 @@ func (c *Client) QueryOrder(ctx context.Context, tradeNo, prepayID string) (Quer
 	}
 	raw, err := c.call(ctx, "/binancepay/openapi/v2/order/query", payload, &out)
 	out.Raw = raw
-	if err == nil && out.Status != "SUCCESS" {
-		err = fmt.Errorf("binancepay query failed: %s %s", out.Code, out.ErrorMessage)
+	if err == nil {
+		err = businessError("query", out.Status, out.Code, out.ErrorMessage)
 	}
 	return out, err
 }
@@ -173,8 +197,11 @@ func (c *Client) CloseOrder(ctx context.Context, tradeNo, prepayID string) (Clos
 		payload["prepayId"] = prepayID
 	}
 	_, err := c.call(ctx, "/binancepay/openapi/order/close", payload, &out)
-	if err == nil && (out.Status != "SUCCESS" || !out.Data) {
-		err = fmt.Errorf("binancepay close failed: %s %s", out.Code, out.ErrorMessage)
+	if err == nil {
+		err = businessError("close", out.Status, out.Code, out.ErrorMessage)
+		if err == nil && !out.Data {
+			err = &APIError{Operation: "close", Code: out.Code, Message: out.ErrorMessage}
+		}
 	}
 	return out, err
 }
@@ -182,8 +209,8 @@ func (c *Client) RefundOrder(ctx context.Context, in RefundOrderRequest) (Refund
 	var out RefundResponse
 	raw, err := c.call(ctx, "/binancepay/openapi/order/refund", in, &out)
 	out.Raw = raw
-	if err == nil && out.Status != "SUCCESS" {
-		err = fmt.Errorf("binancepay refund failed: %s %s", out.Code, out.ErrorMessage)
+	if err == nil {
+		err = businessError("refund", out.Status, out.Code, out.ErrorMessage)
 	}
 	return out, err
 }
@@ -191,8 +218,8 @@ func (c *Client) QueryRefund(ctx context.Context, requestID string) (RefundRespo
 	var out RefundResponse
 	raw, err := c.call(ctx, "/binancepay/openapi/order/refund/query", map[string]string{"refundRequestId": requestID}, &out)
 	out.Raw = raw
-	if err == nil && out.Status != "SUCCESS" {
-		err = fmt.Errorf("binancepay refund query failed: %s %s", out.Code, out.ErrorMessage)
+	if err == nil {
+		err = businessError("refund_query", out.Status, out.Code, out.ErrorMessage)
 	}
 	return out, err
 }
@@ -226,7 +253,16 @@ func (c *Client) call(ctx context.Context, path string, payload, out any) (json.
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return raw, fmt.Errorf("binancepay http %d: %s", resp.StatusCode, raw)
+		var envelope struct {
+			Code         string `json:"code"`
+			ErrorMessage string `json:"errorMessage"`
+		}
+		_ = json.Unmarshal(raw, &envelope)
+		message := envelope.ErrorMessage
+		if message == "" {
+			message = strings.TrimSpace(string(raw))
+		}
+		return raw, &APIError{Operation: "request", Code: envelope.Code, Message: message, HTTPStatus: resp.StatusCode}
 	}
 	return raw, json.Unmarshal(raw, out)
 }

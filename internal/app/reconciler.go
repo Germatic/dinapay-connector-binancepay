@@ -12,6 +12,7 @@ import (
 	"github.com/Germatic/dinapay-connector-binancepay/internal/binancepay"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/observability"
+	contract "github.com/Germatic/dinapay-contracts/go/connectorcontract/failures"
 )
 
 func (s *Service) RunReconciler(ctx context.Context, concurrency int) {
@@ -95,7 +96,27 @@ func (s *Service) retryMismatch(ctx context.Context, payment core.ProviderPaymen
 
 func providerStatusEvent(payment core.ProviderPayment, source, transactionID string) core.ProviderEvent {
 	eventID := deterministicUUID("poll:" + payment.ProviderConnectionID + ":" + payment.ProviderPaymentID + ":" + strings.ToUpper(payment.RawStatus))
-	return core.ProviderEvent{EventID: eventID, EventType: "payment.provider_" + payment.Status, EventVersion: "1", Source: source, OccurredAt: payment.ObservedAt, ObservedAt: payment.ObservedAt, TransactionID: payment.TransactionID, Provider: "binancepay", ProviderConnectionID: payment.ProviderConnectionID, ProviderPaymentID: payment.ProviderPaymentID, Data: core.EventData{Status: payment.Status, RawStatus: payment.RawStatus, Amount: payment.Amount, Currency: payment.Currency, ProviderReference: payment.ProviderReference, ProviderData: map[string]any{"binanceTransactionId": transactionID}}}
+	data := providerEventData(payment, transactionID)
+	return core.ProviderEvent{EventID: eventID, EventType: "payment.provider_" + payment.Status, EventVersion: "1", Source: source, OccurredAt: payment.ObservedAt, ObservedAt: payment.ObservedAt, TransactionID: payment.TransactionID, Provider: "binancepay", ProviderConnectionID: payment.ProviderConnectionID, ProviderPaymentID: payment.ProviderPaymentID, Data: data}
+}
+
+func providerEventData(payment core.ProviderPayment, transactionID string) core.EventData {
+	data := core.EventData{Status: payment.Status, RawStatus: payment.RawStatus, Amount: payment.Amount, Currency: payment.Currency, ProviderReference: payment.ProviderReference, ProviderData: map[string]any{"binanceTransactionId": transactionID}}
+	var code contract.PaymentCode
+	switch payment.Status {
+	case "failed":
+		code = contract.PaymentProcessingError
+	case "cancelled":
+		code = contract.PaymentPayerCancelled
+	case "expired":
+		code = contract.PaymentExpired
+	default:
+		return data
+	}
+	failure := contract.NewPayment(code)
+	providerFailure := contract.ProviderFailure{Code: payment.RawStatus, Message: "Binance Pay returned a terminal order status.", Details: map[string]any{"rawStatus": payment.RawStatus}}
+	data.Failure, data.ProviderFailure = &failure, &providerFailure
+	return data
 }
 
 func deterministicUUID(value string) string {

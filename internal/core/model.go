@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	contract "github.com/Germatic/dinapay-contracts/go/connectorcontract/failures"
 )
 
 type Binding struct {
@@ -120,12 +122,14 @@ type ProviderEvent struct {
 	Data                 EventData `json:"data"`
 }
 type EventData struct {
-	Status            string         `json:"status"`
-	RawStatus         string         `json:"rawStatus"`
-	Amount            string         `json:"amount,omitempty"`
-	Currency          string         `json:"currency,omitempty"`
-	ProviderReference string         `json:"providerReference,omitempty"`
-	ProviderData      map[string]any `json:"providerData,omitempty"`
+	Status            string                    `json:"status"`
+	RawStatus         string                    `json:"rawStatus"`
+	Amount            string                    `json:"amount,omitempty"`
+	Currency          string                    `json:"currency,omitempty"`
+	ProviderReference string                    `json:"providerReference,omitempty"`
+	ProviderData      map[string]any            `json:"providerData,omitempty"`
+	Failure           *contract.Failure         `json:"failure,omitempty"`
+	ProviderFailure   *contract.ProviderFailure `json:"providerFailure,omitempty"`
 }
 type WebhookEnvelope struct {
 	BizType   string          `json:"bizType"`

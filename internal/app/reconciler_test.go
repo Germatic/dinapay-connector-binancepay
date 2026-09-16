@@ -67,6 +67,9 @@ func TestReconcilePayment(t *testing.T) {
 		wantRetry  string
 	}{
 		{name: "confirmed emits durable event", status: "PAY_SUCCESS", amount: "0.25", wantEvent: "confirmed"},
+		{name: "official paid status confirms", status: "PAID", amount: "0.25", wantEvent: "confirmed"},
+		{name: "official error status fails", status: "ERROR", amount: "0.25", wantEvent: "failed"},
+		{name: "official expired status expires", status: "EXPIRED", amount: "0.25", wantEvent: "expired"},
 		{name: "pending is rescheduled", status: "PENDING", amount: "0.25000000", wantUpdate: "pending"},
 		{name: "amount mismatch is retried", status: "PAY_SUCCESS", amount: "0.50", wantRetry: "amount mismatch"},
 	}
@@ -92,6 +95,17 @@ func TestReconcilePayment(t *testing.T) {
 				t.Fatalf("retry=%q want=%q", store.retry, test.wantRetry)
 			}
 		})
+	}
+}
+
+func TestTerminalProviderStatusCarriesNormalizedAndNativeFailure(t *testing.T) {
+	payment := core.ProviderPayment{ProviderConnectionID: "connection", ProviderPaymentID: "prepay", RawStatus: "ERROR", Status: "failed", ObservedAt: time.Now()}
+	event := providerStatusEvent(payment, "poll", "tx")
+	if event.Data.Failure == nil || event.Data.Failure.Code != "processing_error" {
+		t.Fatalf("failure=%#v", event.Data.Failure)
+	}
+	if event.Data.ProviderFailure == nil || event.Data.ProviderFailure.Code != "ERROR" {
+		t.Fatalf("providerFailure=%#v", event.Data.ProviderFailure)
 	}
 }
 

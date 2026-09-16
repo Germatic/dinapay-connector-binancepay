@@ -3,6 +3,7 @@ package binancepay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -44,6 +45,18 @@ func TestCreateOrderUsesBinanceSignatureAndContract(t *testing.T) {
 	}
 	if response.Data.PrepayID != "123" || len(response.Raw) == 0 {
 		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestBusinessErrorPreservesBinanceCode(t *testing.T) {
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"status":"FAIL","code":"400003","errorMessage":"Timestamp outside recvWindow"}`))}, nil
+	})
+	client := &Client{baseURL: "https://binance.test", apiKey: "api-key", secretKey: "secret", http: &http.Client{Transport: transport, Timeout: time.Second}}
+	_, err := client.QueryOrder(context.Background(), "trade", "")
+	var apiError *APIError
+	if !errors.As(err, &apiError) || apiError.Code != "400003" || apiError.Operation != "query" {
+		t.Fatalf("error=%#v", err)
 	}
 }
 

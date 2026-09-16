@@ -225,14 +225,16 @@ func NormalizeStatus(status string) string {
 	switch strings.ToUpper(status) {
 	case "INITIAL":
 		return "created"
-	case "PENDING", "PAID":
+	case "PENDING", "REFUNDING", "REFUNDED":
 		return "pending"
-	case "PAY_SUCCESS":
+	case "PAID", "PAY_SUCCESS":
 		return "confirmed"
-	case "PAY_CLOSED":
+	case "CANCELED", "CANCELLED", "PAY_CLOSED":
 		return "cancelled"
-	case "PAY_FAIL":
+	case "ERROR", "PAY_FAIL":
 		return "failed"
+	case "EXPIRED":
+		return "expired"
 	default:
 		return "pending"
 	}

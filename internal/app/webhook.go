@@ -38,7 +38,11 @@ func (s *Service) HandleWebhook(ctx context.Context, connectionID string, body [
 	}
 	now := s.now().UTC()
 	eventID := fmt.Sprintf("binancepay:%s:%s", payment.ProviderPaymentID, strings.ToLower(envelope.BizStatus))
-	event := core.ProviderEvent{EventID: eventID, EventType: "payment.provider_" + status, EventVersion: "1", Source: "webhook", OccurredAt: now, ObservedAt: now, TransactionID: payment.TransactionID, Provider: "binancepay", ProviderConnectionID: connectionID, ProviderPaymentID: payment.ProviderPaymentID, Data: core.EventData{Status: status, RawStatus: envelope.BizStatus, Amount: payment.Amount, Currency: payment.Currency, ProviderReference: payment.ProviderReference, ProviderData: map[string]any{"binanceTransactionId": data.TransactionID, "bizId": envelope.BizID.String(), "bizIdStr": envelope.BizIDStr}}}
+	payment.Status, payment.RawStatus = status, envelope.BizStatus
+	eventData := providerEventData(payment, data.TransactionID)
+	eventData.ProviderData["bizId"] = envelope.BizID.String()
+	eventData.ProviderData["bizIdStr"] = envelope.BizIDStr
+	event := core.ProviderEvent{EventID: eventID, EventType: "payment.provider_" + status, EventVersion: "1", Source: "webhook", OccurredAt: now, ObservedAt: now, TransactionID: payment.TransactionID, Provider: "binancepay", ProviderConnectionID: connectionID, ProviderPaymentID: payment.ProviderPaymentID, Data: eventData}
 	raw, _ := json.Marshal(map[string]any{"envelope": json.RawMessage(body), "receivedAt": time.Now().UTC()})
 	return s.store.RecordProviderEvent(ctx, event, raw)
 }

@@ -2,7 +2,10 @@ module github.com/Germatic/dinapay-connector-binancepay
 
 go 1.24
 
-require github.com/jackc/pgx/v5 v5.5.4
+require (
+	github.com/Germatic/dinapay-contracts/go/connectorcontract v0.1.0
+	github.com/jackc/pgx/v5 v5.5.4
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
