@@ -76,3 +76,5 @@ CREATE TABLE IF NOT EXISTS binancepay_v2_refunds (
 );
 
 ALTER TABLE binancepay_v2_refunds ADD COLUMN IF NOT EXISTS response_payload jsonb;
+ALTER TABLE binancepay_v2_refunds ADD COLUMN IF NOT EXISTS failure jsonb;
+ALTER TABLE binancepay_v2_refunds ADD COLUMN IF NOT EXISTS provider_failure jsonb;

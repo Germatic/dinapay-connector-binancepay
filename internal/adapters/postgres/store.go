@@ -248,7 +248,9 @@ func (s *Store) ReserveRefund(ctx context.Context, key, hash string, payload []b
 func (s *Store) CompleteRefund(ctx context.Context, key string, r core.ProviderRefund, providerResponse []byte) error {
 	encoded, _ := json.Marshal(r)
 	data, _ := json.Marshal(r.ProviderData)
-	result, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_refunds SET provider_refund_id=$2,status=$3,raw_status=$4,provider_data=$5,response_payload=$6,provider_response=$7,observed_at=$8,updated_at=now() WHERE idempotency_key=$1`, key, r.ProviderRefundID, r.Status, r.RawStatus, data, encoded, providerResponse, r.ObservedAt)
+	failure, _ := json.Marshal(r.Failure)
+	providerFailure, _ := json.Marshal(r.ProviderFailure)
+	result, err := s.Pool.Exec(ctx, `UPDATE binancepay_v2_refunds SET provider_refund_id=$2,status=$3,raw_status=$4,provider_data=$5,response_payload=$6,provider_response=$7,observed_at=$8,failure=NULLIF($9::jsonb,'null'::jsonb),provider_failure=NULLIF($10::jsonb,'null'::jsonb),updated_at=now() WHERE idempotency_key=$1`, key, r.ProviderRefundID, r.Status, r.RawStatus, data, encoded, providerResponse, r.ObservedAt, failure, providerFailure)
 	if err == nil && result.RowsAffected() == 0 {
 		return core.ErrNotFound
 	}
@@ -260,13 +262,15 @@ func (s *Store) FailRefund(ctx context.Context, key, message string) error {
 }
 func (s *Store) FindRefund(ctx context.Context, connection, id string) (core.ProviderRefund, error) {
 	var r core.ProviderRefund
-	var data []byte
-	err := s.Pool.QueryRow(ctx, `SELECT refund_id,transaction_id,provider_connection_id,provider_refund_id,status,raw_status,amount,currency,observed_at,provider_data FROM binancepay_v2_refunds WHERE provider_connection_id=$1 AND (provider_refund_id=$2 OR refund_id=$2)`, connection, id).Scan(&r.RefundID, &r.TransactionID, &r.ProviderConnectionID, &r.ProviderRefundID, &r.Status, &r.RawStatus, &r.Amount, &r.Currency, &r.ObservedAt, &data)
+	var data, failure, providerFailure []byte
+	err := s.Pool.QueryRow(ctx, `SELECT refund_id,transaction_id,provider_connection_id,provider_refund_id,status,raw_status,amount,currency,observed_at,provider_data,failure,provider_failure FROM binancepay_v2_refunds WHERE provider_connection_id=$1 AND (provider_refund_id=$2 OR refund_id=$2)`, connection, id).Scan(&r.RefundID, &r.TransactionID, &r.ProviderConnectionID, &r.ProviderRefundID, &r.Status, &r.RawStatus, &r.Amount, &r.Currency, &r.ObservedAt, &data, &failure, &providerFailure)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return r, core.ErrNotFound
 	}
 	r.Provider = "binancepay"
 	_ = json.Unmarshal(data, &r.ProviderData)
+	_ = json.Unmarshal(failure, &r.Failure)
+	_ = json.Unmarshal(providerFailure, &r.ProviderFailure)
 	return r, err
 }
 
