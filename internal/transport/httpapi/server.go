@@ -14,6 +14,7 @@ import (
 
 	"github.com/Germatic/dinapay-connector-binancepay/internal/app"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/binancepay"
+	"github.com/Germatic/dinapay-connector-binancepay/internal/buildinfo"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/core"
 	"github.com/Germatic/dinapay-connector-binancepay/internal/observability"
 )
@@ -28,7 +29,11 @@ type Server struct {
 func New(service *app.Service, token string, credentials map[string]WebhookCredential) http.Handler {
 	s := &Server{service: service, serviceToken: token, webhookCredentials: credentials}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "up"}) })
+	info := buildinfo.Current("dinapay-connector-binancepay")
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		write(w, 200, map[string]any{"status": "up", "build": info})
+	})
+	mux.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, info) })
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, _ *http.Request) { write(w, 200, map[string]string{"status": "ready"}) })
 	mux.Handle("GET /metrics", internalOnly(observability.Handler()))
 	mux.HandleFunc("GET /v1/capabilities", s.auth(s.capabilities))
