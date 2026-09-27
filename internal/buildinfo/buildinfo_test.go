@@ -15,6 +15,9 @@ func TestCurrentReturnsCanonicalMetadata(t *testing.T) {
 	if got.Service != "service-under-test" || got.Version != "2.3.4" || got.Commit != "abc123" || got.BuiltAt != "2026-09-22T00:00:00Z" || got.Environment != "sandbox" {
 		t.Fatalf("unexpected metadata: %+v", got)
 	}
+	if got.Repository != "github.com/Germatic/dinapay-connector-binancepay" || got.ContractVersion != "v2" {
+		t.Fatalf("unexpected identity: %+v", got)
+	}
 	if !strings.HasPrefix(got.GoVersion, "go") {
 		t.Fatalf("unexpected Go version: %q", got.GoVersion)
 	}
